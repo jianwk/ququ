@@ -103,6 +103,15 @@ class IPCHandlers {
       return await this.funasrManager.transcribeAudio(audioData, options);
     });
 
+    // 分段音频转录
+    ipcMain.handle("transcribe-audio-chunk", async (event, chunkData) => {
+      return await this.funasrManager.transcribeChunk(
+        chunkData.audioData,
+        chunkData.chunkId,
+        chunkData.isFinal
+      );
+    });
+
     // 数据库相关
     ipcMain.handle("save-transcription", (event, data) => {
       return this.databaseManager.saveTranscription(data);

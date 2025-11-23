@@ -11,7 +11,8 @@ const SettingsPage = () => {
     ai_api_key: "",
     ai_base_url: "https://api.openai.com/v1",
     ai_model: "gpt-3.5-turbo",
-    enable_ai_optimization: true
+    enable_ai_optimization: true,
+    use_chunked_transcription: true  // 默认使用实时转录
   });
   
   const [customModel, setCustomModel] = useState(false);
@@ -51,7 +52,8 @@ const SettingsPage = () => {
           ai_api_key: allSettings.ai_api_key || "",
           ai_base_url: allSettings.ai_base_url || "https://api.openai.com/v1",
           ai_model: allSettings.ai_model || "gpt-3.5-turbo",
-          enable_ai_optimization: allSettings.enable_ai_optimization !== false // 默认为true
+          enable_ai_optimization: allSettings.enable_ai_optimization !== false, // 默认为true
+          use_chunked_transcription: allSettings.use_chunked_transcription !== false // 默认为true
         };
         setSettings(prev => ({ ...prev, ...loadedSettings }));
         
@@ -77,6 +79,7 @@ const SettingsPage = () => {
         await window.electronAPI.setSetting('ai_base_url', settings.ai_base_url);
         await window.electronAPI.setSetting('ai_model', settings.ai_model);
         await window.electronAPI.setSetting('enable_ai_optimization', settings.enable_ai_optimization);
+        await window.electronAPI.setSetting('use_chunked_transcription', settings.use_chunked_transcription);
         
         toast.success("设置保存成功");
       }
@@ -241,6 +244,72 @@ const SettingsPage = () => {
                   onRequest={testAccessibilityPermission}
                   buttonText="测试权限"
                 />
+              </div>
+            </div>
+          </div>
+
+          {/* 转录设置部分 */}
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 mb-6">
+            <div className="p-6">
+              <div className="mb-4">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 chinese-title">
+                  转录设置
+                </h2>
+                <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                  选择语音转录模式，影响转录的实时性和用户体验。
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                {/* 实时转录模式开关 */}
+                <div className="flex items-start justify-between p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+                  <div className="flex-1 pr-4">
+                    <label htmlFor="chunked-transcription-toggle" className="text-sm font-medium text-gray-800 dark:text-gray-200 cursor-pointer">
+                      启用实时转录模式
+                    </label>
+                    <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                      开启后，录音过程中每2.5秒自动识别一次，实时显示文本。关闭则使用传统模式（录音结束后一次性转录）。
+                    </p>
+                    <div className="mt-2 space-y-1">
+                      <div className="flex items-center text-xs text-gray-500 dark:text-gray-400">
+                        <span className="mr-2">✓</span>
+                        <span>实时模式：边说边看到文字，延迟2-3秒</span>
+                      </div>
+                      <div className="flex items-center text-xs text-gray-500 dark:text-gray-400">
+                        <span className="mr-2">✓</span>
+                        <span>传统模式：等待录音结束后一次性显示</span>
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    id="chunked-transcription-toggle"
+                    aria-checked={settings.use_chunked_transcription}
+                    onClick={() => handleInputChange('use_chunked_transcription', !settings.use_chunked_transcription)}
+                    className={`${
+                      settings.use_chunked_transcription ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'
+                    } relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={`${
+                        settings.use_chunked_transcription ? 'translate-x-4' : 'translate-x-0'
+                      } inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out`}
+                    />
+                  </button>
+                </div>
+
+                {/* 模式说明 */}
+                <div className="text-xs text-gray-500 dark:text-gray-400 bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-200 dark:border-blue-800">
+                  <p className="font-medium text-blue-800 dark:text-blue-300 mb-1">
+                    💡 模式对比
+                  </p>
+                  <div className="space-y-1 ml-4">
+                    <p><strong>实时模式</strong>：适合长时间录音，可以边说边看到识别结果，但可能在词句边界切断。</p>
+                    <p><strong>传统模式</strong>：适合短句录音，一次性处理完整语音，准确度更高，但需要等待。</p>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

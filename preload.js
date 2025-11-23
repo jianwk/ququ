@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // FunASR语音识别
   transcribeAudio: (audioData) => ipcRenderer.invoke("transcribe-audio", audioData),
+  transcribeAudioChunk: (chunkData) => ipcRenderer.invoke("transcribe-audio-chunk", chunkData),
   checkFunASRStatus: () => ipcRenderer.invoke("check-funasr-status"),
   installFunASR: () => ipcRenderer.invoke("install-funasr"),
   restartFunasrServer: () => ipcRenderer.invoke("restart-funasr-server"),
