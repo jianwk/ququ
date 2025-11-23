@@ -700,14 +700,49 @@ export default function App() {
   // 监听键盘事件
   useEffect(() => {
     const handleKeyPress = (e) => {
+      // 检查是否在输入框等元素中，避免冲突
+      const isInputElement = ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName);
+      const isContentEditable = e.target.isContentEditable;
+
       if (e.key === "Escape") {
         handleClose();
+      }
+      // 空格键控制录音 - 只在非输入元素时触发
+      else if (e.key === " " && !isInputElement && !isContentEditable) {
+        e.preventDefault(); // 防止页面滚动
+
+        // 检查模型是否就绪
+        if (!modelStatus.isReady) {
+          if (modelStatus.stage === 'need_download') {
+            toast.warning("📥 请先下载AI模型文件");
+          } else if (modelStatus.stage === 'downloading') {
+            toast.warning("⬇️ 模型正在下载中，请稍候...");
+          } else if (modelStatus.stage === 'loading') {
+            toast.warning("🤖 模型正在加载中，请稍候...");
+          } else {
+            toast.warning("⏳ 模型未就绪，请稍候...");
+          }
+          return;
+        }
+
+        // 防止在处理中重复触发
+        const isProcessing = useChunkedMode
+          ? (isOptimizing)
+          : (isRecordingProcessing || isOptimizing);
+
+        if (isProcessing) {
+          console.log('⏭️ 正在处理中，跳过空格键触发');
+          return;
+        }
+
+        console.log('⌨️ 空格键触发录音切换');
+        toggleRecording();
       }
     };
 
     document.addEventListener("keydown", handleKeyPress);
     return () => document.removeEventListener("keydown", handleKeyPress);
-  }, []);
+  }, [toggleRecording, modelStatus, useChunkedMode, isRecordingProcessing, isOptimizing]);
 
   // 错误处理
   useEffect(() => {
@@ -772,25 +807,25 @@ export default function App() {
       case "idle":
         return {
           className: `${buttonStyle} cursor-pointer`,
-          tooltip: `按 [${hotkey}] 开始${useChunkedMode ? '实时转录' : '录音'}`,
+          tooltip: `按 [${hotkey}] 或 [空格] 开始${useChunkedMode ? '实时转录' : '录音'}`,
           disabled: false
         };
       case "hover":
         return {
           className: `${buttonStyle} scale-105 shadow-2xl cursor-pointer`,
-          tooltip: `按 [${hotkey}] 开始${useChunkedMode ? '实时转录' : '录音'}`,
+          tooltip: `按 [${hotkey}] 或 [空格] 开始${useChunkedMode ? '实时转录' : '录音'}`,
           disabled: false
         };
       case "recording":
         return {
           className: `${buttonStyle} recording-pulse cursor-pointer`,
-          tooltip: "正在录音...",
+          tooltip: "正在录音，按 [空格] 停止",
           disabled: false
         };
       case "streaming":
         return {
           className: `${buttonStyle} recording-pulse cursor-pointer`,
-          tooltip: "正在实时转录，再次点击停止",
+          tooltip: "正在实时转录，按 [空格] 停止",
           disabled: false
         };
       case "processing":
@@ -901,15 +936,15 @@ export default function App() {
             ) : !modelStatus.isReady ? (
               "模型未就绪，请稍候..."
             ) : micState === "streaming" ? (
-              `正在实时转录${partialResults.length > 0 ? `，已识别 ${partialResults.length} 段` : ''}...`
+              `正在实时转录${partialResults.length > 0 ? `，已识别 ${partialResults.length} 段` : ''}，按空格键停止`
             ) : micState === "recording" ? (
-              "正在录音，再次点击停止"
+              "正在录音，按空格键停止"
             ) : micState === "processing" ? (
               "正在识别语音..."
             ) : micState === "optimizing" ? (
               "AI正在优化文本，请稍候..."
             ) : (
-              `点击麦克风或按 ${hotkey} 开始${useChunkedMode ? '实时转录' : '录音'}`
+              `按 ${hotkey} 或空格键开始${useChunkedMode ? '实时转录' : '录音'}`
             )}
           </p>
         </div>
