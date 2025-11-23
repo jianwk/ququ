@@ -5,6 +5,7 @@ import { LoadingDots } from "./components/ui/loading-dots";
 import { useHotkey } from "./hooks/useHotkey";
 import { useWindowDrag } from "./hooks/useWindowDrag";
 import { useRecording } from "./hooks/useRecording";
+import { useChunkedRecording } from "./hooks/useChunkedRecording";
 import { useTextProcessing } from "./hooks/useTextProcessing";
 import { useModelStatus } from "./hooks/useModelStatus";
 import { usePermissions } from "./hooks/usePermissions";
@@ -117,19 +118,27 @@ const Tooltip = ({ children, content, position = "top" }) => {
 };
 
 // 文本显示区域组件
-const TextDisplay = ({ originalText, processedText, isProcessing, onCopy, onExport, onPaste }) => {
+const TextDisplay = ({ originalText, processedText, isProcessing, isStreaming, onCopy, onExport, onPaste }) => {
   if (!originalText && !processedText) {
     return null; // 当没有文本时不显示任何内容，避免重复
   }
 
   return (
     <div className="space-y-4">
-      {/* 原始识别文本 - 简化设计，单行显示 */}
+      {/* 原始识别文本 - 简化设计，支持流式显示 */}
       {originalText && (
-        <div className="bg-slate-100/80 dark:bg-gray-800/80 rounded-lg p-3 shadow-sm">
+        <div className="bg-slate-100/80 dark:bg-gray-800/80 rounded-lg p-3 shadow-sm relative">
+          {/* 流式转录指示器 */}
+          {isStreaming && (
+            <div className="absolute top-2 left-2 flex items-center space-x-1">
+              <span className="inline-block w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
+              <span className="text-xs text-gray-500 dark:text-gray-400">实时转录</span>
+            </div>
+          )}
           <div className="flex items-center justify-between">
-            <p className="chinese-content text-gray-800 dark:text-gray-200 flex-1 truncate pr-2">
+            <p className="chinese-content text-gray-800 dark:text-gray-200 flex-1 pr-2" style={{ marginTop: isStreaming ? '20px' : '0' }}>
               {originalText}
+              {isStreaming && <span className="inline-block w-0.5 h-5 bg-gray-600 dark:bg-gray-300 ml-1 animate-pulse"></span>}
             </p>
             <button
               onClick={() => onCopy(originalText)}
@@ -219,10 +228,11 @@ export default function App() {
   const [processedText, setProcessedText] = useState("");
   const [showTextArea, setShowTextArea] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  
+  const [useChunkedMode, setUseChunkedMode] = useState(true); // 默认使用分段模式
+
   const { isDragging, handleMouseDown, handleMouseMove, handleMouseUp, handleClick } = useWindowDrag();
   const modelStatus = useModelStatus();
-  
+
   const {
     isRecording,
     isProcessing: isRecordingProcessing,
@@ -231,7 +241,22 @@ export default function App() {
     stopRecording,
     error: recordingError
   } = useRecording();
-  
+
+  // 分段转录Hook
+  const {
+    isStreaming,
+    partialResults,
+    allText: streamingText,
+    error: streamingError,
+    startChunkedRecording,
+    stopChunkedRecording,
+    cancelChunkedRecording
+  } = useChunkedRecording();
+
+  // 保存mediaRecorder和stream的引用（用于分段模式）
+  const mediaRecorderRef = useRef(null);
+  const streamRef = useRef(null);
+
   const {
     processText,
     isProcessing: isTextProcessing,
@@ -325,24 +350,42 @@ export default function App() {
     }
   }, [safePaste, originalText]);
 
+  // 处理分段转录结果
+  const handlePartialTranscription = useCallback((result) => {
+    console.log('🎙️ 分段转录结果:', result);
+
+    // 实时更新显示文本
+    setOriginalText(result.allText);
+    setShowTextArea(true);
+
+    // 清空之前的AI优化结果
+    if (result.chunkId === 1) {
+      setProcessedText("");
+    }
+
+  }, []);
+
   // 设置转录完成回调
   useEffect(() => {
     console.log('设置回调函数');
     window.onTranscriptionComplete = handleRecordingComplete;
     window.onAIOptimizationComplete = handleAIOptimizationComplete;
-    
+    window.onPartialTranscription = handlePartialTranscription; // 分段转录回调
+
     // 验证回调函数是否正确设置
     console.log('回调函数设置完成:', {
       onTranscriptionComplete: typeof window.onTranscriptionComplete,
-      onAIOptimizationComplete: typeof window.onAIOptimizationComplete
+      onAIOptimizationComplete: typeof window.onAIOptimizationComplete,
+      onPartialTranscription: typeof window.onPartialTranscription
     });
-    
+
     return () => {
       console.log('清理回调函数');
       window.onTranscriptionComplete = null;
       window.onAIOptimizationComplete = null;
+      window.onPartialTranscription = null;
     };
-  }, [handleRecordingComplete, handleAIOptimizationComplete]);
+  }, [handleRecordingComplete, handleAIOptimizationComplete, handlePartialTranscription]);
 
   // 处理复制文本
   const handleCopyText = async (text) => {
@@ -405,39 +448,144 @@ export default function App() {
   }, [modelStatus]);
 
   // 切换录音状态
-  const toggleRecording = useCallback(() => {
+  const toggleRecording = useCallback(async () => {
     // 检查模型状态
     if (modelStatus.stage === 'need_download') {
       toast.warning("📥 请先下载AI模型文件");
       return;
     }
-    
+
     if (modelStatus.stage === 'downloading') {
       toast.warning("⬇️ 模型正在下载中，请稍候...");
       return;
     }
-    
+
     if (modelStatus.stage === 'loading') {
       toast.warning("🤖 模型正在加载中，请稍候...");
       return;
     }
-    
+
     if (modelStatus.stage === 'error') {
       toast.error(`❌ 模型错误: ${modelStatus.error}`);
       return;
     }
-    
+
     if (!modelStatus.isReady) {
       toast.warning("⏳ 模型未就绪，请稍候...");
       return;
     }
 
-    if (!isRecording && !isRecordingProcessing) {
-      startRecording();
-    } else if (isRecording) {
-      stopRecording();
+    // 分段模式
+    if (useChunkedMode) {
+      if (!isStreaming) {
+        try {
+          const { mediaRecorder, stream } = await startChunkedRecording();
+          mediaRecorderRef.current = mediaRecorder;
+          streamRef.current = stream;
+          toast.success("🎙️ 开始实时转录...");
+        } catch (err) {
+          toast.error(`启动失败: ${err.message}`);
+        }
+      } else {
+        try {
+          const result = await stopChunkedRecording();
+          mediaRecorderRef.current = null;
+          streamRef.current = null;
+
+          console.log('🔚 分段录音结束，最终文本:', result.text);
+
+          // 设置最终文本
+          setOriginalText(result.text);
+
+          // 进行AI优化
+          if (result.text && result.text.trim()) {
+            setIsOptimizing(true);
+            setTimeout(async () => {
+              try {
+                const useAI = await window.electronAPI.getSetting('enable_ai_optimization', true);
+
+                if (useAI && window.electronAPI) {
+                  const aiResult = await window.electronAPI.processText(result.text, 'optimize');
+
+                  if (aiResult && aiResult.success && aiResult.text) {
+                    setProcessedText(aiResult.text);
+                    await safePaste(aiResult.text);
+                    toast.success("🤖 AI文本优化完成并已自动粘贴！");
+
+                    // 保存转录数据
+                    await window.electronAPI.saveTranscription({
+                      raw_text: result.text,
+                      text: aiResult.text,
+                      processed_text: aiResult.text,
+                      confidence: 0.95,
+                      duration: result.duration || 0,
+                      file_size: 0,
+                      language: 'zh-CN'
+                    });
+                  } else {
+                    // AI优化失败，粘贴原始文本
+                    await safePaste(result.text);
+                    toast.info("已粘贴原始识别文本");
+
+                    // 保存原始文本
+                    await window.electronAPI.saveTranscription({
+                      raw_text: result.text,
+                      text: result.text,
+                      confidence: 0.95,
+                      duration: result.duration || 0,
+                      file_size: 0,
+                      language: 'zh-CN'
+                    });
+                  }
+                } else {
+                  // 不使用AI优化，直接粘贴
+                  await safePaste(result.text);
+                  toast.success("✅ 转录完成并已自动粘贴！");
+
+                  // 保存原始文本
+                  await window.electronAPI.saveTranscription({
+                    raw_text: result.text,
+                    text: result.text,
+                    confidence: 0.95,
+                    duration: result.duration || 0,
+                    file_size: 0,
+                    language: 'zh-CN'
+                  });
+                }
+              } catch (err) {
+                console.error('AI优化或保存失败:', err);
+                toast.error(`处理失败: ${err.message}`);
+              } finally {
+                setIsOptimizing(false);
+              }
+            }, 100);
+          }
+
+        } catch (err) {
+          toast.error(`停止失败: ${err.message}`);
+        }
+      }
     }
-  }, [modelStatus, isRecording, isRecordingProcessing, startRecording, stopRecording]);
+    // 传统模式
+    else {
+      if (!isRecording && !isRecordingProcessing) {
+        startRecording();
+      } else if (isRecording) {
+        stopRecording();
+      }
+    }
+  }, [
+    modelStatus,
+    useChunkedMode,
+    isStreaming,
+    isRecording,
+    isRecordingProcessing,
+    startChunkedRecording,
+    stopChunkedRecording,
+    startRecording,
+    stopRecording,
+    safePaste
+  ]);
 
   // 使用热键Hook，不再使用F2双击功能
   const { hotkey, syncRecordingState, registerHotkey } = useHotkey();
@@ -525,9 +673,10 @@ export default function App() {
   // 同步录音状态到热键管理器
   useEffect(() => {
     if (syncRecordingState) {
-      syncRecordingState(isRecording);
+      const currentRecordingState = useChunkedMode ? isStreaming : isRecording;
+      syncRecordingState(currentRecordingState);
     }
-  }, [isRecording, syncRecordingState]);
+  }, [isRecording, isStreaming, useChunkedMode, syncRecordingState]);
 
   // 监听键盘事件
   useEffect(() => {
@@ -549,6 +698,12 @@ export default function App() {
   }, [recordingError]);
 
   useEffect(() => {
+    if (streamingError) {
+      toast.error(streamingError);
+    }
+  }, [streamingError]);
+
+  useEffect(() => {
     if (textProcessingError) {
       toast.error(textProcessingError);
     }
@@ -556,15 +711,22 @@ export default function App() {
 
   // 确定当前麦克风状态
   const getMicState = () => {
-    if (isRecording) return "recording";
-    if (isRecordingProcessing) return "processing";
-    if (isOptimizing) return "optimizing";
-    if (isHovered && !isRecording && !isRecordingProcessing && !isOptimizing) return "hover";
-    return "idle";
+    if (useChunkedMode) {
+      if (isStreaming) return "streaming";
+      if (isOptimizing) return "optimizing";
+      if (isHovered && !isStreaming && !isOptimizing) return "hover";
+      return "idle";
+    } else {
+      if (isRecording) return "recording";
+      if (isRecordingProcessing) return "processing";
+      if (isOptimizing) return "optimizing";
+      if (isHovered && !isRecording && !isRecordingProcessing && !isOptimizing) return "hover";
+      return "idle";
+    }
   };
 
   const micState = getMicState();
-  const isListening = isRecording || isRecordingProcessing;
+  const isListening = useChunkedMode ? isStreaming : (isRecording || isRecordingProcessing);
 
   // 获取麦克风按钮属性
   const getMicButtonProps = () => {
@@ -591,19 +753,25 @@ export default function App() {
       case "idle":
         return {
           className: `${buttonStyle} cursor-pointer`,
-          tooltip: `按 [${hotkey}] 开始录音`,
+          tooltip: `按 [${hotkey}] 开始${useChunkedMode ? '实时转录' : '录音'}`,
           disabled: false
         };
       case "hover":
         return {
           className: `${buttonStyle} scale-105 shadow-2xl cursor-pointer`,
-          tooltip: `按 [${hotkey}] 开始录音`,
+          tooltip: `按 [${hotkey}] 开始${useChunkedMode ? '实时转录' : '录音'}`,
           disabled: false
         };
       case "recording":
         return {
           className: `${buttonStyle} recording-pulse cursor-pointer`,
           tooltip: "正在录音...",
+          disabled: false
+        };
+      case "streaming":
+        return {
+          className: `${buttonStyle} recording-pulse cursor-pointer`,
+          tooltip: "正在实时转录，再次点击停止",
           disabled: false
         };
       case "processing":
@@ -713,6 +881,8 @@ export default function App() {
               `模型错误: ${modelStatus.error}`
             ) : !modelStatus.isReady ? (
               "模型未就绪，请稍候..."
+            ) : micState === "streaming" ? (
+              `正在实时转录${partialResults.length > 0 ? `，已识别 ${partialResults.length} 段` : ''}...`
             ) : micState === "recording" ? (
               "正在录音，再次点击停止"
             ) : micState === "processing" ? (
@@ -720,7 +890,7 @@ export default function App() {
             ) : micState === "optimizing" ? (
               "AI正在优化文本，请稍候..."
             ) : (
-              `点击麦克风或按 ${hotkey} 开始录音`
+              `点击麦克风或按 ${hotkey} 开始${useChunkedMode ? '实时转录' : '录音'}`
             )}
           </p>
         </div>
@@ -741,6 +911,7 @@ export default function App() {
             originalText={originalText}
             processedText={processedText}
             isProcessing={isTextProcessing || isOptimizing}
+            isStreaming={isStreaming}
             onCopy={handleCopyText}
             onExport={handleExportText}
             onPaste={safePaste}

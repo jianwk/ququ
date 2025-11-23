@@ -1207,6 +1207,107 @@ class FunASRManager {
     }
   }
 
+  /**
+   * 分段音频转录
+   * 用于实时转录场景，每次处理一个音频段
+   * @param {Uint8Array|Buffer} audioData - 音频数据
+   * @param {number} chunkId - 分段ID
+   * @param {boolean} isFinal - 是否为最后一个分段
+   * @returns {Promise<Object>} 转录结果
+   */
+  async transcribeChunk(audioData, chunkId, isFinal = false) {
+    try {
+      // 检查 FunASR 是否已安装
+      const status = await this.checkFunASRInstallation();
+      if (!status.installed) {
+        throw new Error("FunASR 未安装。请先安装 FunASR。");
+      }
+
+      // 如果服务器还未就绪，等待初始化完成
+      if (!this.serverReady && this.initializationPromise) {
+        this.logger.info && this.logger.info(`分段${chunkId}: 等待FunASR服务器就绪...`);
+        await this.initializationPromise;
+      }
+
+      if (!this.serverReady) {
+        throw new Error('FunASR服务器未就绪，请稍后重试');
+      }
+
+      // 创建临时文件
+      const tempDir = os.tmpdir();
+      const filename = `funasr_chunk_${chunkId}_${Date.now()}.wav`;
+      const tempAudioPath = path.join(tempDir, filename);
+
+      this.logger.info && this.logger.info(`分段${chunkId}: 创建临时文件`, tempAudioPath);
+
+      // 写入音频数据
+      const buffer = Buffer.from(audioData);
+      await fs.promises.writeFile(tempAudioPath, buffer);
+
+      // 验证文件
+      const stats = await fs.promises.stat(tempAudioPath);
+      if (stats.size === 0) {
+        throw new Error(`分段${chunkId}: 音频文件为空`);
+      }
+
+      this.logger.info && this.logger.info(`分段${chunkId}: 音频文件大小 ${stats.size} bytes`);
+
+      try {
+        // 发送转录命令
+        const result = await this._sendServerCommand({
+          action: 'transcribe',
+          audio_path: tempAudioPath,
+          options: {
+            batch_size_s: 60,
+            use_vad: false,  // 分段转录不需要VAD，因为已经是音频段
+            use_punc: true,  // 保留标点恢复
+            language: 'zh'
+          }
+        });
+
+        if (!result.success) {
+          throw new Error(result.error || '转录失败');
+        }
+
+        this.logger.info && this.logger.info(`分段${chunkId}: 转录成功`, {
+          text: result.text,
+          isFinal: isFinal
+        });
+
+        return {
+          success: true,
+          text: result.text.trim(),
+          raw_text: result.raw_text || result.text,
+          confidence: result.confidence || 0.0,
+          duration: result.duration || 0.0,
+          language: result.language || "zh-CN",
+          chunkId: chunkId,
+          isFinal: isFinal
+        };
+
+      } finally {
+        // 异步清理临时文件
+        setTimeout(async () => {
+          try {
+            await fs.promises.unlink(tempAudioPath);
+            this.logger.debug && this.logger.debug(`分段${chunkId}: 临时文件已删除`);
+          } catch (err) {
+            this.logger.warn && this.logger.warn(`分段${chunkId}: 删除临时文件失败`, err.message);
+          }
+        }, 1000);
+      }
+
+    } catch (error) {
+      this.logger.error && this.logger.error(`分段${chunkId}: 转录失败`, error.message);
+      return {
+        success: false,
+        error: error.message,
+        chunkId: chunkId,
+        isFinal: isFinal
+      };
+    }
+  }
+
   async checkStatus() {
     try {
       if (this.serverReady) {
