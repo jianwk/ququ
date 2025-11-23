@@ -506,8 +506,6 @@ export default function App() {
       } else {
         try {
           const result = await stopChunkedRecording();
-          mediaRecorderRef.current = null;
-          streamRef.current = null;
 
           console.log('🔚 分段录音结束，最终文本:', result.text);
 
@@ -580,6 +578,10 @@ export default function App() {
 
         } catch (err) {
           toast.error(`停止失败: ${err.message}`);
+        } finally {
+          // 确保资源被清理
+          mediaRecorderRef.current = null;
+          streamRef.current = null;
         }
       }
     }
