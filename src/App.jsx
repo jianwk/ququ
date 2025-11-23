@@ -228,7 +228,7 @@ export default function App() {
   const [processedText, setProcessedText] = useState("");
   const [showTextArea, setShowTextArea] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [useChunkedMode, setUseChunkedMode] = useState(true); // 默认使用分段模式
+  const [useChunkedMode, setUseChunkedMode] = useState(true); // 从设置读取，默认true
 
   const { isDragging, handleMouseDown, handleMouseMove, handleMouseUp, handleClick } = useWindowDrag();
   const modelStatus = useModelStatus();
@@ -266,6 +266,23 @@ export default function App() {
   // 防重复粘贴的引用
   const lastPasteRef = useRef({ text: '', timestamp: 0 });
   const PASTE_DEBOUNCE_TIME = 1000; // 1秒内相同文本不重复粘贴
+
+  // 从设置中加载转录模式
+  useEffect(() => {
+    const loadTranscriptionMode = async () => {
+      if (window.electronAPI) {
+        try {
+          const mode = await window.electronAPI.getSetting('use_chunked_transcription', true);
+          setUseChunkedMode(mode);
+          console.log('📝 转录模式已加载:', mode ? '实时模式' : '传统模式');
+        } catch (error) {
+          console.error('加载转录模式设置失败:', error);
+          // 如果加载失败，保持默认值 true
+        }
+      }
+    };
+    loadTranscriptionMode();
+  }, []);
 
   // 安全粘贴函数
   const safePaste = useCallback(async (text) => {
